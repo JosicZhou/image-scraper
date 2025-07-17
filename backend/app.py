@@ -8,21 +8,30 @@ import threading
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS, cross_origin
 from bs4 import BeautifulSoup, Tag
-from urllib.parse import urljoin, urlparse, unquote
+from urllib.parse import urljoin, urlparse
 
 app = Flask(__name__)
-CORS(app)
 
-UPLOAD_FOLDER = 'uploads'
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+# Allow requests from the Netlify frontend
+CORS(app, origins=["https://bright-begonia-2ef8db.netlify.app"])
 
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
+# This proxies dictionary is for local development when you are behind a proxy.
+# It will not be used when deployed on Render.
 proxies = {
     'http': 'http://127.0.0.1:1080',
     'https': 'http://127.0.0.1:1080',
 }
+
+def sanitize_filename(filename):
+    """
+    Sanitizes a string to be a valid filename.
+    """
+    # Replace underscores with spaces for better readability
+    sanitized = filename.replace('_', ' ')
+    # Remove characters that are invalid in Windows filenames
+    sanitized = re.sub(r'[\\/*?:"<>|]',"", sanitized)
+    # Limit length to prevent issues with file systems
+    return sanitized[:100]
 
 def clean_fandom_url(url):
     """
@@ -41,18 +50,8 @@ def clean_fandom_url(url):
             return base_url + query_string
     return url
 
-def sanitize_filename(filename):
-    """
-    Sanitizes a string to be a valid filename.
-    """
-    # Replace underscores with spaces for better readability
-    sanitized = filename.replace('_', ' ')
-    # Remove characters that are invalid in Windows filenames
-    sanitized = re.sub(r'[\\/*?:"<>|]',"", sanitized)
-    # Limit length to prevent issues with file systems
-    return sanitized[:100]
-
 @app.route('/scrape', methods=['POST'])
+@cross_origin()
 def scrape():
     data = request.get_json()
     url = data.get('url')
@@ -64,8 +63,12 @@ def scrape():
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        response = requests.get(url, headers=headers, timeout=20, proxies=proxies)
-        response.raise_for_status() # Raise an exception for bad status codes
+        # Use proxies only for local development, not for deployment
+        use_proxy = os.getenv("FLASK_ENV") != "production"
+        current_proxies = proxies if use_proxy else None
+        
+        response = requests.get(url, headers=headers, timeout=20, proxies=current_proxies)
+        response.raise_for_status()
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
@@ -73,66 +76,34 @@ def scrape():
     images = []
     for img in soup.find_all('img'):
         if isinstance(img, Tag):
-            # Handle lazy-loaded images that use 'data-src'
             src = img.get('data-src') or img.get('src')
-            alt = img.get('alt') # Will be None if 'alt' attribute doesn't exist
+            alt = img.get('alt')
 
-            # IMPORTANT: Only process images that have both a 'src' and a non-empty 'alt' attribute.
             if src and alt:
-                # Make URL absolute
                 src = urljoin(url, str(src))
-
-                # Clean Fandom/Wikia URLs to get full resolution images
                 src = clean_fandom_url(src)
-
-                # --- HIERARCHICAL RENAMING LOGIC ---
-                # Rule 1: By default, trust the alt text.
-                final_name = str(alt)
-
-                # Rule 2: Check if the alt text is suspicious (e.g., is a URL, too long).
-                is_suspicious = ('http:' in final_name.lower()) or \
-                                ('https:' in final_name.lower()) or \
-                                ('.php' in final_name.lower()) or \
-                                (len(final_name) > 80)
-
-                # Rule 3: If suspicious, try to get a better name from the URL.
-                if is_suspicious:
-                    try:
-                        parsed_url = urlparse(src)
-                        filename_from_url = os.path.basename(parsed_url.path)
-                        image_name_from_url, _ = os.path.splitext(unquote(filename_from_url))
-                        
-                        # If a name is successfully extracted, use it.
-                        if image_name_from_url:
-                            final_name = image_name_from_url
-                    except Exception as e:
-                        print(f"Could not parse name from URL {src} despite suspicious alt text: {e}")
-                        # Fallback to the original (suspicious) alt text if parsing fails.
-                        pass
-                
-                # FINAL UNIFICATION: Replace underscores with spaces for both display and download.
-                final_name = final_name.replace('_', ' ')
-
-                images.append({'src': src, 'alt': final_name})
+                images.append({'src': src, 'alt': str(alt)})
 
     return jsonify(images)
 
 @app.route('/proxy')
+@cross_origin()
 def proxy_image():
     image_url = request.args.get('url')
     if not image_url:
-        # Return a 400 Bad Request error if the URL is missing
         return jsonify({"error": "Image URL parameter is required"}), 400
     
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        # Add a referer header to mimic a direct request from the site
         parsed_url = urlparse(image_url)
         headers['Referer'] = f"{parsed_url.scheme}://{parsed_url.netloc}/"
+        
+        use_proxy = os.getenv("FLASK_ENV") != "production"
+        current_proxies = proxies if use_proxy else None
 
-        response = requests.get(image_url, headers=headers, stream=True, timeout=20, proxies=proxies)
+        response = requests.get(image_url, headers=headers, stream=True, timeout=20, proxies=current_proxies)
         response.raise_for_status()
         
         return send_file(
@@ -141,8 +112,8 @@ def proxy_image():
         )
             
     except requests.exceptions.RequestException as e:
-        # If fetching fails, return an error
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/download-image', methods=['POST'])
 @cross_origin()
@@ -155,12 +126,14 @@ def download_image():
         return jsonify({"error": "Image URL is required"}), 400
 
     try:
-        response = requests.get(image_url, stream=True, timeout=20, proxies=proxies)
+        use_proxy = os.getenv("FLASK_ENV") != "production"
+        current_proxies = proxies if use_proxy else None
+        
+        response = requests.get(image_url, stream=True, timeout=20, proxies=current_proxies)
         response.raise_for_status()
 
-        # Get file extension
         content_type = response.headers.get('content-type')
-        extension = '.jpg' # default
+        extension = '.jpg'
         if content_type:
             if 'jpeg' in content_type:
                 extension = '.jpg'
@@ -183,6 +156,7 @@ def download_image():
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
+
 @app.route('/download-selected', methods=['POST'])
 @cross_origin()
 def download_selected():
@@ -203,7 +177,10 @@ def download_selected():
             return None
 
         try:
-            response = requests.get(image_url, stream=True, timeout=20, proxies=proxies)
+            use_proxy = os.getenv("FLASK_ENV") != "production"
+            current_proxies = proxies if use_proxy else None
+        
+            response = requests.get(image_url, stream=True, timeout=20, proxies=current_proxies)
             response.raise_for_status()
 
             content_type = response.headers.get('content-type')
@@ -253,9 +230,7 @@ def download_selected():
         download_name='images.zip'
     )
 
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
 if __name__ == '__main__':
+    # This block is for local development only.
+    # When deployed on Render, it uses the 'web' command from the Procfile.
     app.run(host='0.0.0.0', debug=True, port=5000)
