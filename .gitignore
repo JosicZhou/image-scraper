@@ -1,0 +1,9 @@
+# Python specific
+__pycache__/
+*.pyc
+
+# Downloads folder
+downloads/
+
+# Backup files
+*.zip 
