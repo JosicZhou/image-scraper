@@ -13,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteSelectedBtn = document.getElementById('delete-selected-btn');
     const deepScrapeCheckbox = document.getElementById('deep-scrape-checkbox');
 
-    const API_URL = 'https://image-scraper-sm8n.onrender.com';
+    const API_URL = 'https://image-scraper-service.onrender.com';
     let allImages = [];
     let currentIndex = 0;
     const batchSize = 50;
@@ -44,8 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (!response.ok) {
-                const errorResult = await response.json().catch(() => ({ error: 'An unknown error occurred' }));
-                throw new Error(errorResult.error || `HTTP error! status: ${response.status}`);
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             allImages = await response.json();
@@ -123,8 +122,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(errorResult.error || `HTTP error! status: ${response.status}`);
             }
             
+            // Get filename from 'Content-Disposition' header
             const disposition = response.headers.get('Content-Disposition');
-            let filename = `${sanitizeAltForFilename(image.alt)}.jpg`;
+            let filename = `${sanitizeAltForFilename(image.alt)}.jpg`; // fallback
             if (disposition && disposition.indexOf('attachment') !== -1) {
                 const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
                 const matches = filenameRegex.exec(disposition);
@@ -154,7 +154,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function sanitizeAltForFilename(text) {
-        if (!text) return 'downloaded_image';
         return text.replace(/[^a-z0-9]/gi, '_').toLowerCase();
     }
 
