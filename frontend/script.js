@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadSelectedBtn = document.getElementById('download-selected-btn');
     const deleteSelectedBtn = document.getElementById('delete-selected-btn');
 
-    const API_URL = `${window.location.protocol}//${window.location.hostname}:5000`;
+    const API_URL = 'https://image-scraper-sm8n.onrender.com';
     let allImages = [];
     let currentIndex = 0;
     const batchSize = 50;
