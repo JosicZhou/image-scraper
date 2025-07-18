@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentIndex = 0;
         imageQueue = []; // Reset queue
         if (observer) observer.disconnect(); // Disconnect old observer
+        setupIntersectionObserver(); // Re-initialize the observer for the new set of images
         loadMoreContainer.style.display = 'none';
         
         try {
