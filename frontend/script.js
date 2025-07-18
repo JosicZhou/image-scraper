@@ -99,7 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Set a placeholder first
         card.innerHTML = `
-            <img src="https://via.placeholder.com/200x150?text=Loading..." alt="${image.alt}" loading="lazy">
+            <img src="https://via.placeholder.com/200x150?text=Loading..." alt="${image.alt}">
             <p class="alt-text" title="${image.alt}">${image.alt || 'No alt text'}</p>
             <div class="actions">
                 <button class="download-btn">Download</button>
