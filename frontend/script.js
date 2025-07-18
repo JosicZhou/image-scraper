@@ -17,6 +17,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let allImages = [];
     let currentIndex = 0;
     const batchSize = 50;
+    let imageQueue = [];
+    let isQueueProcessing = false;
+    let observer;
 
     scrapeBtn.addEventListener('click', async () => {
         const url = urlInput.value.trim();
@@ -29,6 +32,8 @@ document.addEventListener('DOMContentLoaded', () => {
         imageGallery.innerHTML = '';
         allImages = [];
         currentIndex = 0;
+        imageQueue = []; // Reset queue
+        if (observer) observer.disconnect(); // Disconnect old observer
         loadMoreContainer.style.display = 'none';
         
         try {
@@ -71,6 +76,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         imageGallery.appendChild(fragment);
+        
+        // Observe newly added cards
+        const cards = fragment.querySelectorAll('.image-card');
+        cards.forEach(card => observer.observe(card));
+
         currentIndex = nextIndex;
 
         if (currentIndex < allImages.length) {
@@ -87,10 +97,9 @@ document.addEventListener('DOMContentLoaded', () => {
         card.dataset.imageUrl = image.src;
         card.dataset.altText = image.alt;
 
-        const proxyUrl = `${API_URL}/proxy?url=${encodeURIComponent(image.src)}`;
-
+        // Set a placeholder first
         card.innerHTML = `
-            <img src="${proxyUrl}" alt="${image.alt}" loading="lazy" onerror="this.src='https://via.placeholder.com/200x150?text=Image+Not+Found'; this.onerror=null;">
+            <img src="https://via.placeholder.com/200x150?text=Loading..." alt="${image.alt}" loading="lazy">
             <p class="alt-text" title="${image.alt}">${image.alt || 'No alt text'}</p>
             <div class="actions">
                 <button class="download-btn">Download</button>
@@ -100,9 +109,64 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         card.querySelector('.download-btn').addEventListener('click', (event) => downloadSingleImage(image, event));
-        card.querySelector('.delete-btn').addEventListener('click', () => card.remove());
+        card.querySelector('.delete-btn').addEventListener('click', () => {
+            card.remove();
+            // Optional: remove from queue if it's there
+            const queueIndex = imageQueue.findIndex(item => item.card === card);
+            if (queueIndex > -1) imageQueue.splice(queueIndex, 1);
+        });
         
         return card;
+    }
+
+    function setupIntersectionObserver() {
+        observer = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const card = entry.target;
+                    const imageUrl = card.dataset.imageUrl;
+                    
+                    // Add to queue instead of loading directly
+                    imageQueue.push({ card: card, url: imageUrl });
+                    if (!isQueueProcessing) {
+                        processQueue();
+                    }
+                    
+                    observer.unobserve(card); // Stop observing once it's queued
+                }
+            });
+        }, { rootMargin: "200px" }); // Start loading when image is 200px away from viewport
+    }
+
+    async function processQueue() {
+        if (imageQueue.length === 0) {
+            isQueueProcessing = false;
+            return;
+        }
+
+        isQueueProcessing = true;
+        const { card, url } = imageQueue.shift();
+        const imgElement = card.querySelector('img');
+
+        if (imgElement) {
+            const proxyUrl = `${API_URL}/proxy?url=${encodeURIComponent(url)}`;
+            try {
+                const response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error('Proxy fetch failed');
+                const imageBlob = await response.blob();
+                imgElement.src = URL.createObjectURL(imageBlob);
+                imgElement.onerror = () => {
+                    imgElement.src = 'https://via.placeholder.com/200x150?text=Image+Not+Found';
+                    imgElement.onerror = null;
+                };
+            } catch (e) {
+                imgElement.src = 'https://via.placeholder.com/200x150?text=Image+Failed';
+                imgElement.onerror = null;
+            }
+        }
+
+        // Process next item in the queue after a short delay
+        setTimeout(processQueue, 200); // 200ms delay between requests
     }
 
     async function downloadSingleImage(image, event) {
@@ -224,4 +288,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Initial setup
+    setupIntersectionObserver();
 });
