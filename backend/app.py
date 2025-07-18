@@ -15,13 +15,6 @@ app = Flask(__name__)
 # Allow requests from the Netlify frontend
 CORS(app, origins=["https://bright-begonia-2ef8db.netlify.app"])
 
-# This proxies dictionary is for local development when you are behind a proxy.
-# It will not be used when deployed on Render.
-proxies = {
-    'http': 'http://127.0.0.1:1080',
-    'https': 'http://127.0.0.1:1080',
-}
-
 def sanitize_filename(filename):
     """
     Sanitizes a string to be a valid filename.
@@ -63,11 +56,8 @@ def scrape():
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        # Use proxies only for local development, not for deployment
-        use_proxy = os.getenv("FLASK_ENV") != "production"
-        current_proxies = proxies if use_proxy else None
         
-        response = requests.get(url, headers=headers, timeout=20, proxies=current_proxies)
+        response = requests.get(url, headers=headers, timeout=20)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
@@ -100,10 +90,7 @@ def proxy_image():
         parsed_url = urlparse(image_url)
         headers['Referer'] = f"{parsed_url.scheme}://{parsed_url.netloc}/"
         
-        use_proxy = os.getenv("FLASK_ENV") != "production"
-        current_proxies = proxies if use_proxy else None
-
-        response = requests.get(image_url, headers=headers, stream=True, timeout=20, proxies=current_proxies)
+        response = requests.get(image_url, headers=headers, stream=True, timeout=20)
         response.raise_for_status()
         
         return send_file(
@@ -126,10 +113,7 @@ def download_image():
         return jsonify({"error": "Image URL is required"}), 400
 
     try:
-        use_proxy = os.getenv("FLASK_ENV") != "production"
-        current_proxies = proxies if use_proxy else None
-        
-        response = requests.get(image_url, stream=True, timeout=20, proxies=current_proxies)
+        response = requests.get(image_url, stream=True, timeout=20)
         response.raise_for_status()
 
         content_type = response.headers.get('content-type')
@@ -177,10 +161,7 @@ def download_selected():
             return None
 
         try:
-            use_proxy = os.getenv("FLASK_ENV") != "production"
-            current_proxies = proxies if use_proxy else None
-        
-            response = requests.get(image_url, stream=True, timeout=20, proxies=current_proxies)
+            response = requests.get(image_url, stream=True, timeout=20)
             response.raise_for_status()
 
             content_type = response.headers.get('content-type')
