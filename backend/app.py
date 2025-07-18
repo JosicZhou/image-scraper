@@ -10,9 +10,6 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 import time
 
@@ -20,7 +17,6 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 def clean_fandom_url(url):
-    # This regex removes the revision and size parameters from Fandom/Wikia image URLs
     return re.sub(r'/revision/latest/scale-to-width-down/\d+', '', url)
 
 def scrape_images(url):
@@ -32,12 +28,9 @@ def scrape_images(url):
         for img in soup.find_all('img'):
             src = img.get('src')
             if src:
-                # Resolve relative URLs
                 full_url = urljoin(url, src)
-                # Clean URL if it's from fandom
                 if 'static.wikia.nocookie.net' in full_url:
                     full_url = clean_fandom_url(full_url)
-                
                 images.append({
                     "src": full_url,
                     "alt": img.get('alt', 'No alt text')
@@ -49,7 +42,7 @@ def scrape_images(url):
 
 def scrape_deep(url):
     """
-    New deep scraping method using Selenium to handle dynamic content.
+    Scraping method using Selenium. Now simplified for Docker.
     """
     chrome_options = Options()
     chrome_options.add_argument("--headless")
@@ -57,28 +50,13 @@ def scrape_deep(url):
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     
-    # Check if running on Render and set paths accordingly
-    if os.environ.get("RENDER"):
-        chrome_binary_location = os.environ.get("CHROME_BIN")
-        chromedriver_path = os.environ.get("CHROMEDRIVER_PATH")
-        
-        if chrome_binary_location:
-            chrome_options.binary_location = chrome_binary_location
-        
-        if chromedriver_path:
-            service = Service(executable_path=chromedriver_path)
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-        else:
-            # Fallback for Render if path not set, though it should be.
-            driver = webdriver.Chrome(options=chrome_options)
-    else:
-        # Local development setup
-        driver = webdriver.Chrome(options=chrome_options)
+    # Selenium Manager will automatically find Chrome and ChromeDriver in the Docker container
+    service = Service()
+    driver = webdriver.Chrome(service=service, options=chrome_options)
 
     images = []
     try:
         driver.get(url)
-
         last_height = driver.execute_script("return document.body.scrollHeight")
         for _ in range(5): 
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -97,7 +75,6 @@ def scrape_deep(url):
                 full_url = urljoin(url, src)
                 if 'static.wikia.nocookie.net' in full_url:
                     full_url = clean_fandom_url(full_url)
-                
                 images.append({
                     "src": full_url,
                     "alt": img.get('alt', 'No alt text')
@@ -113,7 +90,7 @@ def scrape_deep(url):
 def scrape():
     data = request.get_json()
     url = data.get('url')
-    mode = data.get('mode', 'fast') # Default to 'fast' if not provided
+    mode = data.get('mode', 'fast')
 
     if not url:
         return jsonify({"error": "URL is required"}), 400
@@ -126,16 +103,11 @@ def scrape():
             print("Using fast scraping mode.")
             images = scrape_images(url)
         
-        cleaned_images = []
-        for img in images:
-            if img.get('alt', '').strip():
-                 cleaned_images.append(img)
-        
+        cleaned_images = [img for img in images if img.get('alt', '').strip()]
         return jsonify(cleaned_images)
     except Exception as e:
         print(f"An error occurred during scraping: {e}")
-        return jsonify({"error": str(e)}), 500
-
+        return jsonify({"error": str(e), "type": "ScrapingError"}), 500
 
 @app.route('/proxy')
 def proxy():
@@ -145,13 +117,8 @@ def proxy():
     try:
         response = requests.get(url, stream=True, headers={'User-Agent': 'Mozilla/5.0', 'Referer': url})
         response.raise_for_status()
-        
         content = BytesIO(response.content)
-        
-        return send_file(
-            content,
-            mimetype=response.headers.get('Content-Type', 'image/jpeg')
-        )
+        return send_file(content, mimetype=response.headers.get('Content-Type', 'image/jpeg'))
     except requests.RequestException as e:
         return f"Failed to fetch image: {e}", 500
 
@@ -164,25 +131,15 @@ def sanitize_filename(name):
 def download_image(img_data):
     url = img_data.get("src")
     alt = img_data.get("alt", "image")
-    
     try:
         response = requests.get(url, stream=True, headers={'User-Agent': 'Mozilla/5.0', 'Referer': url})
         response.raise_for_status()
-        
         filename_alt = sanitize_filename(alt)
-        
-        # Get file extension from URL or content type
         url_path = urlparse(url).path
         ext = os.path.splitext(url_path)[1]
         if not ext:
             content_type = response.headers.get('Content-Type', '')
-            if 'jpeg' in content_type or 'jpg' in content_type:
-                ext = '.jpg'
-            elif 'png' in content_type:
-                ext = '.png'
-            else:
-                ext = '.jpg' # default
-
+            ext = '.jpg' if 'jpeg' in content_type or 'jpg' in content_type else '.png' if 'png' in content_type else '.jpg'
         filename = f"{filename_alt}{ext}"
         return filename, response.content
     except Exception as e:
@@ -201,25 +158,20 @@ def download_selected():
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
         downloaded_filenames = set()
-
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_img = {executor.submit(download_image, img): img for img in images_to_download}
             for future in future_to_img:
                 filename, content = future.result()
-                if filename and content:
-                    if filename not in downloaded_filenames:
-                        zip_file.writestr(filename, content)
-                        downloaded_filenames.add(filename)
-                    else:
-                        print(f"Skipping duplicate filename: {filename}")
-
+                if filename and content and filename not in downloaded_filenames:
+                    zip_file.writestr(filename, content)
+                    downloaded_filenames.add(filename)
     zip_buffer.seek(0)
-    return send_file(
-        zip_buffer,
-        mimetype='application/zip',
-        as_attachment=True,
-        download_name='images.zip'
-    )
+    return send_file(zip_buffer, mimetype='application/zip', as_attachment=True, download_name='images.zip')
+
+@app.route('/')
+def health_check():
+    return "Backend is running."
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=os.environ.get('PORT', 5001), debug=True)
+    port = int(os.environ.get('PORT', 5001))
+    app.run(host='0.0.0.0', port=port, debug=True)
