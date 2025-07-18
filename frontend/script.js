@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const deselectAllBtn = document.getElementById('deselect-all-btn');
     const downloadSelectedBtn = document.getElementById('download-selected-btn');
     const deleteSelectedBtn = document.getElementById('delete-selected-btn');
+    const deepScrapeCheckbox = document.getElementById('deep-scrape-checkbox');
 
     const API_URL = 'https://image-scraper-sm8n.onrender.com';
     let allImages = [];
@@ -34,14 +35,17 @@ document.addEventListener('DOMContentLoaded', () => {
             scrapeBtn.textContent = 'Scraping...';
             scrapeBtn.disabled = true;
 
+            const scrapeMode = deepScrapeCheckbox.checked ? 'deep' : 'fast';
+
             const response = await fetch(`${API_URL}/scrape`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url }),
+                body: JSON.stringify({ url, mode: scrapeMode }),
             });
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                const errorResult = await response.json().catch(() => ({ error: 'An unknown error occurred' }));
+                throw new Error(errorResult.error || `HTTP error! status: ${response.status}`);
             }
 
             allImages = await response.json();
@@ -119,9 +123,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(errorResult.error || `HTTP error! status: ${response.status}`);
             }
             
-            // Get filename from 'Content-Disposition' header
             const disposition = response.headers.get('Content-Disposition');
-            let filename = `${sanitizeAltForFilename(image.alt)}.jpg`; // fallback
+            let filename = `${sanitizeAltForFilename(image.alt)}.jpg`;
             if (disposition && disposition.indexOf('attachment') !== -1) {
                 const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
                 const matches = filenameRegex.exec(disposition);
@@ -151,6 +154,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function sanitizeAltForFilename(text) {
+        if (!text) return 'downloaded_image';
         return text.replace(/[^a-z0-9]/gi, '_').toLowerCase();
     }
 
