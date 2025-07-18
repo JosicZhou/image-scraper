@@ -13,27 +13,25 @@
             <input type="text" id="url-input" placeholder="Enter website URL">
             <button id="scrape-btn">Scrape Images</button>
         </div>
-
-        <div class="info-container">
+        <div class="options-container">
+            <input type="checkbox" id="deep-scrape-checkbox">
+            <label for="deep-scrape-checkbox">Deep Scrape (Slower, for complex sites)</label>
+        </div>
+        <div class="image-info">
             <p id="image-count">Found 0 images.</p>
-            <div class="bulk-actions">
+            <div class="batch-actions">
                 <button id="select-all-btn">Select All</button>
                 <button id="deselect-all-btn">Deselect All</button>
                 <button id="download-selected-btn">Download Selected</button>
                 <button id="delete-selected-btn">Delete Selected</button>
             </div>
         </div>
-
-        <div id="image-gallery" class="gallery">
-            <!-- Images will be dynamically added here -->
-        </div>
-
-        <div id="load-more-container" class="load-more-container" style="display: none;">
+        <div id="image-gallery"></div>
+        <div id="load-more-container" style="display: none;">
             <button id="load-more-btn">Load More</button>
             <button id="stop-btn">Stop</button>
         </div>
     </div>
-
     <script src="script.js"></script>
 </body>
 </html>
