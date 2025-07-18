@@ -17,9 +17,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let allImages = [];
     let currentIndex = 0;
     const batchSize = 50;
-    let imageQueue = [];
-    let isQueueProcessing = false;
-    let observer;
 
     scrapeBtn.addEventListener('click', async () => {
         const url = urlInput.value.trim();
@@ -28,13 +25,9 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Reset state
         imageGallery.innerHTML = '';
         allImages = [];
         currentIndex = 0;
-        imageQueue = []; // Reset queue
-        if (observer) observer.disconnect(); // Disconnect old observer
-        setupIntersectionObserver(); // Re-initialize the observer for the new set of images
         loadMoreContainer.style.display = 'none';
         
         try {
@@ -50,13 +43,14 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                const errorData = await response.json().catch(() => ({'error': 'An unknown error occurred during scrape.'}));
+                throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
             }
 
             allImages = await response.json();
             imageCountEl.textContent = `Found ${allImages.length} images.`;
-
             renderImages();
+
         } catch (error) {
             alert(`Error scraping images: ${error.message}`);
             imageCountEl.textContent = 'Failed to scrape images.';
@@ -77,11 +71,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         imageGallery.appendChild(fragment);
-        
-        // Observe newly added cards
-        const cards = fragment.querySelectorAll('.image-card');
-        cards.forEach(card => observer.observe(card));
-
         currentIndex = nextIndex;
 
         if (currentIndex < allImages.length) {
@@ -98,9 +87,11 @@ document.addEventListener('DOMContentLoaded', () => {
         card.dataset.imageUrl = image.src;
         card.dataset.altText = image.alt;
 
-        // Set a placeholder first
+        const proxyUrl = `${API_URL}/proxy?url=${encodeURIComponent(image.src)}`;
+
         card.innerHTML = `
-            <img src="https://via.placeholder.com/200x150?text=Loading..." alt="${image.alt}">
+            <img src="${proxyUrl}" alt="${image.alt}" loading="lazy" 
+                 onerror="this.onerror=null; this.src='https://via.placeholder.com/200x150?text=Image+Failed';">
             <p class="alt-text" title="${image.alt}">${image.alt || 'No alt text'}</p>
             <div class="actions">
                 <button class="download-btn">Download</button>
@@ -110,68 +101,14 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         card.querySelector('.download-btn').addEventListener('click', (event) => downloadSingleImage(image, event));
-        card.querySelector('.delete-btn').addEventListener('click', () => {
-            card.remove();
-            // Optional: remove from queue if it's there
-            const queueIndex = imageQueue.findIndex(item => item.card === card);
-            if (queueIndex > -1) imageQueue.splice(queueIndex, 1);
-        });
+        card.querySelector('.delete-btn').addEventListener('click', () => card.remove());
         
         return card;
     }
 
-    function setupIntersectionObserver() {
-        observer = new IntersectionObserver((entries, observer) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const card = entry.target;
-                    const imageUrl = card.dataset.imageUrl;
-                    
-                    // Add to queue instead of loading directly
-                    imageQueue.push({ card: card, url: imageUrl });
-                    if (!isQueueProcessing) {
-                        processQueue();
-                    }
-                    
-                    observer.unobserve(card); // Stop observing once it's queued
-                }
-            });
-        }, { rootMargin: "200px" }); // Start loading when image is 200px away from viewport
-    }
-
-    async function processQueue() {
-        if (imageQueue.length === 0) {
-            isQueueProcessing = false;
-            return;
-        }
-
-        isQueueProcessing = true;
-        const { card, url } = imageQueue.shift();
-        const imgElement = card.querySelector('img');
-
-        if (imgElement) {
-            const proxyUrl = `${API_URL}/proxy?url=${encodeURIComponent(url)}`;
-            try {
-                const response = await fetch(proxyUrl);
-                if (!response.ok) throw new Error('Proxy fetch failed');
-                const imageBlob = await response.blob();
-                imgElement.src = URL.createObjectURL(imageBlob);
-                imgElement.onerror = () => {
-                    imgElement.src = 'https://via.placeholder.com/200x150?text=Image+Not+Found';
-                    imgElement.onerror = null;
-                };
-            } catch (e) {
-                imgElement.src = 'https://via.placeholder.com/200x150?text=Image+Failed';
-                imgElement.onerror = null;
-            }
-        }
-
-        // Process next item in the queue after a short delay
-        setTimeout(processQueue, 200); // 200ms delay between requests
-    }
-
     async function downloadSingleImage(image, event) {
-        const button = event.target.closest('button');
+        const button = event.target;
+        const originalText = button.textContent;
         try {
             button.textContent = 'Downloading...';
             button.disabled = true;
@@ -187,45 +124,36 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(errorResult.error || `HTTP error! status: ${response.status}`);
             }
             
-            // Get filename from 'Content-Disposition' header
             const disposition = response.headers.get('Content-Disposition');
-            let filename = `${sanitizeAltForFilename(image.alt)}.jpg`; // fallback
+            let filename = "download.jpg";
             if (disposition && disposition.indexOf('attachment') !== -1) {
-                const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                const filenameRegex = /filename[^;=\n]*=(['"]?)(.*?)\1(?:;|$)/;
                 const matches = filenameRegex.exec(disposition);
-                if (matches != null && matches[1]) { 
-                  filename = matches[1].replace(/['"]/g, '');
+                if (matches != null && matches[2]) { 
+                  filename = matches[2];
                 }
             }
 
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
+            a.style.display = 'none';
             a.href = url;
             a.download = filename;
             document.body.appendChild(a);
             a.click();
-            a.remove();
             window.URL.revokeObjectURL(url);
+            a.remove();
 
         } catch (error) {
             alert(`Error downloading image: ${error.message}`);
         } finally {
-            if(button){
-                 button.textContent = 'Download';
-                 button.disabled = false;
-            }
+            button.textContent = originalText;
+            button.disabled = false;
         }
-    }
-    
-    function sanitizeAltForFilename(text) {
-        return text.replace(/[^a-z0-9]/gi, '_').toLowerCase();
     }
 
     loadMoreBtn.addEventListener('click', renderImages);
-    stopBtn.addEventListener('click', () => {
-        loadMoreContainer.style.display = 'none';
-    });
 
     selectAllBtn.addEventListener('click', () => {
         document.querySelectorAll('.image-card .checkbox').forEach(cb => cb.checked = true);
@@ -256,9 +184,11 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const button = downloadSelectedBtn;
+        const originalText = button.textContent;
         try {
-            downloadSelectedBtn.textContent = `Downloading (${selectedImages.length})...`;
-            downloadSelectedBtn.disabled = true;
+            button.textContent = `Downloading (${selectedImages.length})...`;
+            button.disabled = true;
 
             const response = await fetch(`${API_URL}/download-selected`, {
                 method: 'POST',
@@ -274,21 +204,19 @@ document.addEventListener('DOMContentLoaded', () => {
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
+            a.style.display = 'none';
             a.href = url;
             a.download = 'images.zip';
             document.body.appendChild(a);
             a.click();
-            a.remove();
             window.URL.revokeObjectURL(url);
+            a.remove();
 
         } catch (error) {
             alert(`Error downloading selected images: ${error.message}`);
         } finally {
-            downloadSelectedBtn.textContent = 'Download Selected';
-            downloadSelectedBtn.disabled = false;
+            button.textContent = originalText;
+            button.disabled = false;
         }
     });
-
-    // Initial setup
-    setupIntersectionObserver();
 });
