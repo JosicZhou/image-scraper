@@ -158,7 +158,7 @@ def download_selected():
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
         downloaded_filenames = set()
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        with ThreadPoolExecutor(max_workers=2) as executor: # Reduced from 10 to 2
             future_to_img = {executor.submit(download_image, img): img for img in images_to_download}
             for future in future_to_img:
                 filename, content = future.result()
