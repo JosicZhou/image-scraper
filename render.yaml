@@ -7,7 +7,7 @@ services:
     rootDir: backend
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn app:app"
-    buildpacks:
+    buildPacks: # <--- 这是关键的修改！'P'必须是大写！
       - https://github.com/heroku/heroku-buildpack-google-chrome
       - https://github.com/heroku/heroku-buildpack-chromedriver
     envVars:
