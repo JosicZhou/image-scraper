@@ -5,10 +5,16 @@ import io
 import zipfile
 import concurrent.futures
 import threading
+import time
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS, cross_origin
 from bs4 import BeautifulSoup, Tag
 from urllib.parse import urljoin, urlparse
+
+# Selenium imports for deep scraping
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 
 app = Flask(__name__)
 
@@ -43,24 +49,19 @@ def clean_fandom_url(url):
             return base_url + query_string
     return url
 
-@app.route('/scrape', methods=['POST'])
-@cross_origin()
-def scrape():
-    data = request.get_json()
-    url = data.get('url')
-
-    if not url:
-        return jsonify({"error": "URL is required"}), 400
-
+def scrape_fast(url):
+    """
+    Original fast scraping method using requests.
+    """
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        
         response = requests.get(url, headers=headers, timeout=20)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 500
+        # Re-raise a custom exception to be caught by the main route
+        raise ValueError(f"Request failed: {str(e)}")
 
     soup = BeautifulSoup(response.content, 'html.parser')
     images = []
@@ -73,8 +74,77 @@ def scrape():
                 src = urljoin(url, str(src))
                 src = clean_fandom_url(src)
                 images.append({'src': src, 'alt': str(alt)})
+    return images
 
-    return jsonify(images)
+
+def scrape_deep(url):
+    """
+    New deep scraping method using Selenium to handle dynamic content.
+    """
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    # For Render deployment, chromedriver is often in a specific path
+    # We will let Selenium Manager handle this, which is the default for Service()
+    service = Service()
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+
+    images = []
+    try:
+        driver.get(url)
+        
+        last_height = driver.execute_script("return document.body.scrollHeight")
+        for _ in range(5): # Limit scrolls to prevent infinite loops
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                break
+            last_height = new_height
+        
+        time.sleep(2) # Final wait
+        page_source = driver.page_source
+        soup = BeautifulSoup(page_source, 'html.parser')
+
+        for img in soup.find_all('img'):
+            src = img.get('src')
+            alt = img.get('alt')
+            if src and alt:
+                src = urljoin(url, str(src))
+                images.append({'src': src, 'alt': str(alt)})
+    finally:
+        driver.quit()
+        
+    return images
+
+
+@app.route('/scrape', methods=['POST'])
+@cross_origin()
+def scrape():
+    data = request.get_json()
+    url = data.get('url')
+    mode = data.get('mode', 'fast') # Default to fast mode
+
+    if not url:
+        return jsonify({"error": "URL is required"}), 400
+
+    try:
+        if mode == 'deep':
+            print("Using deep scraping mode.")
+            images = scrape_deep(url)
+        else:
+            print("Using fast scraping mode.")
+            images = scrape_fast(url)
+        
+        # Filter out images with no alt text from the results
+        images = [img for img in images if img.get('alt', '').strip()]
+        
+        return jsonify(images)
+    except Exception as e:
+        print(f"An error occurred during scraping: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/proxy')
 @cross_origin()
